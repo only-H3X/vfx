@@ -12,7 +12,7 @@ import noisereduce as nr
 import tkinter as tk
 from tkinter import ttk
 
-# Default configuration with noise reduction settings.
+# Default configuration with additional audio quality parameters.
 DEFAULT_CONFIG = {
     "pitch": 0.0,
     "samplerate": 44100,
@@ -21,10 +21,13 @@ DEFAULT_CONFIG = {
     "input_device": None,
     "output_device": None,
     "enable_noise_reduction": True,
-    "calibration_duration": 3.0  # seconds for ambient noise calibration
+    "calibration_duration": 3.0,  # seconds for ambient noise calibration
+    "enable_compression": False,
+    "compression_gain": 2.0,      # gain for soft clipping compression
+    "dither_level": 1e-6          # amplitude of dithering noise
 }
 
-# Preset configurations for 15 human vocals.
+# Preset configurations for 15 human vocals (basic settings).
 DEFAULT_PRESETS = {
     "Male Bass":      {"pitch": -4.0, "enable_noise_reduction": True},
     "Male Baritone":  {"pitch": -2.0, "enable_noise_reduction": True},
@@ -44,7 +47,7 @@ DEFAULT_PRESETS = {
 }
 
 class Config:
-    """Loads default configuration and applies JSON or CLI overrides."""
+    """Loads default configuration and applies JSON/CLI overrides."""
     def __init__(self, config_file=None):
         self.config = DEFAULT_CONFIG.copy()
         if config_file:
@@ -63,9 +66,10 @@ class Config:
         self.config[key] = value
 
 class VoiceModulator:
-    """Production‐grade voice modulator with enhanced audio capture (noise cancellation and calibration)."""
+    """Production‑grade voice modulator with enhanced real‑time processing."""
     def __init__(self, config: Config):
         self.config = config
+        # Basic settings.
         self.pitch = config.get("pitch")
         self.samplerate = config.get("samplerate")
         self.channels = config.get("channels")
@@ -74,10 +78,17 @@ class VoiceModulator:
         self.output_device = config.get("output_device")
         self.enable_noise_reduction = config.get("enable_noise_reduction")
         self.calibration_duration = config.get("calibration_duration")
+        # New audio quality settings.
+        self.enable_compression = config.get("enable_compression")
+        self.compression_gain = config.get("compression_gain")
+        self.dither_level = config.get("dither_level")
         self.noise_profile = None
         self.running = False
         self.audio_stream = None
         self.param_lock = threading.Lock()
+        # For performance metrics.
+        self.processing_times = []
+        self.last_processing_time = 0.0
 
     def calibrate_noise_profile(self):
         """Record ambient noise to build a noise profile."""
@@ -95,7 +106,17 @@ class VoiceModulator:
             logging.error("Noise calibration failed: %s", e)
             self.noise_profile = None
 
+    def apply_compression_and_dither(self, audio):
+        """Apply a simple soft-clip compression and add dithering noise."""
+        if self.enable_compression:
+            # Soft-clip using tanh.
+            audio = np.tanh(self.compression_gain * audio) / np.tanh(self.compression_gain)
+        if self.dither_level > 0:
+            audio = audio + np.random.normal(0, self.dither_level, audio.shape)
+        return audio
+
     def audio_callback(self, indata, outdata, frames, time_info, status):
+        start_time = time.perf_counter()
         if status:
             logging.warning("Audio stream status: %s", status)
         try:
@@ -104,10 +125,10 @@ class VoiceModulator:
                 current_pitch = self.pitch
                 nr_enabled = self.enable_noise_reduction
                 noise_profile = self.noise_profile
-
+            # Process each channel independently.
             for ch in range(indata.shape[1]):
                 channel_audio = indata[:, ch]
-                # Apply noise reduction if enabled and calibrated.
+                # Noise reduction.
                 if nr_enabled and noise_profile is not None:
                     try:
                         reduced_audio = nr.reduce_noise(y=channel_audio,
@@ -118,18 +139,28 @@ class VoiceModulator:
                         reduced_audio = channel_audio
                 else:
                     reduced_audio = channel_audio
-
-                # Apply pitch shifting.
+                # Pitch shifting.
                 shifted = librosa.effects.pitch_shift(reduced_audio, self.samplerate, n_steps=current_pitch)
                 if len(shifted) < len(channel_audio):
                     shifted = np.pad(shifted, (0, len(channel_audio) - len(shifted)), mode="constant")
                 elif len(shifted) > len(channel_audio):
                     shifted = shifted[:len(channel_audio)]
-                processed[:, ch] = shifted
+                # Apply compression and dithering.
+                processed[:, ch] = self.apply_compression_and_dither(shifted)
             outdata[:] = processed
         except Exception as e:
             logging.error("Error in audio callback: %s", e)
-            outdata[:] = indata  # fallback: pass-through
+            outdata[:] = indata  # fallback: pass input through
+        end_time = time.perf_counter()
+        processing_time = end_time - start_time
+        # Record and average the processing time.
+        with self.param_lock:
+            self.processing_times.append(processing_time)
+            if len(self.processing_times) > 100:
+                self.processing_times.pop(0)
+            self.last_processing_time = sum(self.processing_times) / len(self.processing_times)
+        if processing_time > 0.05:  # 50ms threshold
+            logging.warning("High processing time: %.3f s", processing_time)
 
     def list_devices(self):
         """List available input/output devices."""
@@ -137,11 +168,6 @@ class VoiceModulator:
         for i, dev in enumerate(devices):
             logging.info("Device %d: %s", i, dev["name"])
         return devices
-
-    def select_devices(self):
-        """If devices are not preset, leave as None to use defaults."""
-        # This method is now not interactive; the GUI will set devices.
-        pass
 
     def start(self):
         """Start the audio stream and perform initial noise calibration if enabled."""
@@ -222,20 +248,22 @@ class ConfigWindow(tk.Tk):
         self.title("Voice Modulator Configuration")
         self.modulator = modulator
         self.presets = presets
-        self.geometry("500x500")
+        self.geometry("600x600")
         self.modulator_thread = None
         self.create_widgets()
         self.load_basic_settings()
         self.load_advanced_settings()
-        # Start the modulator stream using current settings.
+        self.create_performance_panel()
+        self.create_platform_info()
+        # Start performance metrics update.
+        self.update_performance_metrics()
+        # Start the modulator stream.
         self.restart_stream()
 
     def create_widgets(self):
-        # Preset selection and basic parameters.
+        # Basic Configuration.
         basic_frame = ttk.LabelFrame(self, text="Basic Configuration")
         basic_frame.pack(padx=10, pady=10, fill="x")
-
-        # Preset selection.
         ttk.Label(basic_frame, text="Select Preset:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
         self.preset_var = tk.StringVar(value=list(self.presets.keys())[0])
         self.preset_menu = ttk.OptionMenu(basic_frame, self.preset_var,
@@ -243,98 +271,103 @@ class ConfigWindow(tk.Tk):
                                           *self.presets.keys(),
                                           command=self.on_preset_selected)
         self.preset_menu.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-
-        # Pitch control.
         ttk.Label(basic_frame, text="Pitch (semitones):").grid(row=1, column=0, padx=5, pady=5, sticky="w")
         self.pitch_var = tk.DoubleVar()
         self.pitch_scale = ttk.Scale(basic_frame, from_=-10, to=10, orient="horizontal",
                                      variable=self.pitch_var)
         self.pitch_scale.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-
-        # Noise reduction toggle.
         self.nr_var = tk.BooleanVar()
         self.nr_check = ttk.Checkbutton(basic_frame, text="Enable Noise Reduction", variable=self.nr_var)
         self.nr_check.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky="w")
-
-        # Button to apply basic settings.
         basic_apply_btn = ttk.Button(basic_frame, text="Apply Basic Settings", command=self.apply_basic_settings)
         basic_apply_btn.grid(row=3, column=0, columnspan=2, padx=5, pady=5)
+        basic_frame.columnconfigure(1, weight=1)
 
-        # Advanced configuration.
+        # Advanced Configuration.
         adv_frame = ttk.LabelFrame(self, text="Advanced Configuration")
         adv_frame.pack(padx=10, pady=10, fill="x")
-
         ttk.Label(adv_frame, text="Samplerate (Hz):").grid(row=0, column=0, padx=5, pady=5, sticky="w")
         self.samplerate_var = tk.IntVar(value=self.modulator.samplerate)
         self.samplerate_entry = ttk.Entry(adv_frame, textvariable=self.samplerate_var)
         self.samplerate_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-
         ttk.Label(adv_frame, text="Channels:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
         self.channels_var = tk.IntVar(value=self.modulator.channels)
         self.channels_entry = ttk.Entry(adv_frame, textvariable=self.channels_var)
         self.channels_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-
         ttk.Label(adv_frame, text="Blocksize:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
         self.blocksize_var = tk.IntVar(value=self.modulator.blocksize)
         self.blocksize_entry = ttk.Entry(adv_frame, textvariable=self.blocksize_var)
         self.blocksize_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
-
         ttk.Label(adv_frame, text="Calibration Duration (sec):").grid(row=3, column=0, padx=5, pady=5, sticky="w")
         self.calibration_duration_var = tk.DoubleVar(value=self.modulator.calibration_duration)
         self.calibration_duration_entry = ttk.Entry(adv_frame, textvariable=self.calibration_duration_var)
         self.calibration_duration_entry.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
-
-        # Input and output device selection.
         input_devs = get_input_devices()
         output_devs = get_output_devices()
         ttk.Label(adv_frame, text="Input Device:").grid(row=4, column=0, padx=5, pady=5, sticky="w")
         self.input_device_var = tk.StringVar(value="Default")
-        input_options = list(input_devs.keys())
-        self.input_menu = ttk.OptionMenu(adv_frame, self.input_device_var, "Default", *input_options)
+        self.input_menu = ttk.OptionMenu(adv_frame, self.input_device_var, "Default", *list(input_devs.keys()))
         self.input_menu.grid(row=4, column=1, padx=5, pady=5, sticky="ew")
-
         ttk.Label(adv_frame, text="Output Device:").grid(row=5, column=0, padx=5, pady=5, sticky="w")
         self.output_device_var = tk.StringVar(value="Default")
-        output_options = list(output_devs.keys())
-        self.output_menu = ttk.OptionMenu(adv_frame, self.output_device_var, "Default", *output_options)
+        self.output_menu = ttk.OptionMenu(adv_frame, self.output_device_var, "Default", *list(output_devs.keys()))
         self.output_menu.grid(row=5, column=1, padx=5, pady=5, sticky="ew")
-
-        # Buttons for advanced settings.
+        # New advanced quality settings.
+        ttk.Label(adv_frame, text="Compression Gain:").grid(row=6, column=0, padx=5, pady=5, sticky="w")
+        self.compression_gain_var = tk.DoubleVar(value=self.modulator.compression_gain)
+        self.compression_gain_entry = ttk.Entry(adv_frame, textvariable=self.compression_gain_var)
+        self.compression_gain_entry.grid(row=6, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Label(adv_frame, text="Dither Level:").grid(row=7, column=0, padx=5, pady=5, sticky="w")
+        self.dither_level_var = tk.DoubleVar(value=self.modulator.dither_level)
+        self.dither_level_entry = ttk.Entry(adv_frame, textvariable=self.dither_level_var)
+        self.dither_level_entry.grid(row=7, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Label(adv_frame, text="Enable Compression:").grid(row=8, column=0, padx=5, pady=5, sticky="w")
+        self.compression_enabled_var = tk.BooleanVar(value=self.modulator.enable_compression)
+        self.compression_enabled_check = ttk.Checkbutton(adv_frame, text="Compression", variable=self.compression_enabled_var)
+        self.compression_enabled_check.grid(row=8, column=1, padx=5, pady=5, sticky="w")
         adv_btn_frame = ttk.Frame(adv_frame)
-        adv_btn_frame.grid(row=6, column=0, columnspan=2, pady=10)
+        adv_btn_frame.grid(row=9, column=0, columnspan=2, pady=10)
         restart_btn = ttk.Button(adv_btn_frame, text="Restart Stream", command=self.restart_stream)
         restart_btn.pack(side="left", padx=5)
         stop_btn = ttk.Button(adv_btn_frame, text="Stop Stream", command=self.stop_stream)
         stop_btn.pack(side="left", padx=5)
-
         adv_frame.columnconfigure(1, weight=1)
         basic_frame.columnconfigure(1, weight=1)
 
+    def create_performance_panel(self):
+        perf_frame = ttk.LabelFrame(self, text="Performance Metrics")
+        perf_frame.pack(padx=10, pady=10, fill="x")
+        self.performance_label = ttk.Label(perf_frame, text="Avg Processing Time: N/A")
+        self.performance_label.pack(padx=5, pady=5)
+
+    def create_platform_info(self):
+        platform_info = f"Platform: {platform.system()} {platform.release()}"
+        self.platform_label = ttk.Label(self, text=platform_info)
+        self.platform_label.pack(padx=10, pady=5)
+
     def load_basic_settings(self):
-        """Load basic settings from the modulator into the GUI."""
         with self.modulator.param_lock:
             self.pitch_var.set(self.modulator.pitch)
             self.nr_var.set(self.modulator.enable_noise_reduction)
 
     def load_advanced_settings(self):
-        """Load advanced settings from the modulator into the GUI."""
         self.samplerate_var.set(self.modulator.samplerate)
         self.channels_var.set(self.modulator.channels)
         self.blocksize_var.set(self.modulator.blocksize)
         self.calibration_duration_var.set(self.modulator.calibration_duration)
-        # For devices, "Default" means None.
         self.input_device_var.set("Default" if self.modulator.input_device is None else str(self.modulator.input_device))
         self.output_device_var.set("Default" if self.modulator.output_device is None else str(self.modulator.output_device))
+        self.compression_gain_var.set(self.modulator.compression_gain)
+        self.dither_level_var.set(self.modulator.dither_level)
+        self.compression_enabled_var.set(self.modulator.enable_compression)
 
     def on_preset_selected(self, preset_name):
-        """When a preset is chosen, update basic controls."""
         preset = self.presets.get(preset_name)
         if preset:
             self.pitch_var.set(preset.get("pitch", 0.0))
             self.nr_var.set(preset.get("enable_noise_reduction", True))
 
     def apply_basic_settings(self):
-        """Apply basic settings (pitch and noise reduction) to the modulator."""
         with self.modulator.param_lock:
             self.modulator.pitch = self.pitch_var.get()
             self.modulator.enable_noise_reduction = self.nr_var.get()
@@ -342,7 +375,6 @@ class ConfigWindow(tk.Tk):
                      self.modulator.pitch, self.modulator.enable_noise_reduction)
 
     def restart_stream(self):
-        """Stop the current stream, update advanced settings, and restart the modulator."""
         logging.info("Restarting audio stream with new advanced settings...")
         self.stop_stream()
         # Update advanced settings.
@@ -355,18 +387,26 @@ class ConfigWindow(tk.Tk):
             self.modulator.input_device = None if inp == "Default" else int(inp)
             outp = self.output_device_var.get()
             self.modulator.output_device = None if outp == "Default" else int(outp)
+            self.modulator.compression_gain = float(self.compression_gain_var.get())
+            self.modulator.dither_level = float(self.dither_level_var.get())
+            self.modulator.enable_compression = self.compression_enabled_var.get()
         # Start the modulator in a new thread.
         self.modulator.running = True
         self.modulator_thread = threading.Thread(target=self.modulator.start, daemon=True)
         self.modulator_thread.start()
 
     def stop_stream(self):
-        """Stop the modulator stream if running."""
         if self.modulator.running:
             self.modulator.stop()
         if self.modulator_thread and self.modulator_thread.is_alive():
             self.modulator_thread.join()
             logging.info("Audio stream stopped.")
+
+    def update_performance_metrics(self):
+        with self.modulator.param_lock:
+            avg_time_ms = self.modulator.last_processing_time * 1000
+        self.performance_label.config(text=f"Avg Processing Time: {avg_time_ms:.2f} ms")
+        self.after(1000, self.update_performance_metrics)
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Production Grade Voice Modulator with Interactive GUI")
@@ -382,11 +422,8 @@ def parse_arguments():
 
 def main():
     setup_logging()
-    
-    # macOS-specific reminder.
     if platform.system() == "Darwin":
         logging.info("Running on macOS. Ensure microphone access is granted in System Preferences > Security & Privacy > Microphone.")
-
     args = parse_arguments()
     config = Config(args.config)
     if args.pitch is not None:
@@ -403,14 +440,10 @@ def main():
         config.update("output_device", args.output_device)
     if args.nr is not None:
         config.update("enable_noise_reduction", args.nr == "on")
-
     modulator = VoiceModulator(config)
-    # Launch the interactive GUI window.
     app = ConfigWindow(modulator, DEFAULT_PRESETS)
     app.protocol("WM_DELETE_WINDOW", app.quit)
     app.mainloop()
-
-    # On closing the GUI, ensure the modulator stream is stopped.
     modulator.stop()
     if app.modulator_thread and app.modulator_thread.is_alive():
         app.modulator_thread.join()
