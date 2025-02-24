@@ -129,7 +129,7 @@ class VoiceModulator:
             outdata[:] = processed
         except Exception as e:
             logging.error("Error in audio callback: %s", e)
-            outdata[:] = indata  # fallback pass-through
+            outdata[:] = indata  # fallback: pass-through
 
     def list_devices(self):
         """List available input/output devices."""
@@ -139,27 +139,13 @@ class VoiceModulator:
         return devices
 
     def select_devices(self):
-        """Select audio devices if not preset."""
-        devices = self.list_devices()
-        if self.input_device is None:
-            try:
-                inp = input("Enter input device index (or press Enter for default): ")
-                if inp.strip():
-                    self.input_device = int(inp)
-            except ValueError:
-                logging.info("Invalid input. Using default input device.")
-        if self.output_device is None:
-            try:
-                outp = input("Enter output device index (or press Enter for default): ")
-                if outp.strip():
-                    self.output_device = int(outp)
-            except ValueError:
-                logging.info("Invalid input. Using default output device.")
+        """If devices are not preset, leave as None to use defaults."""
+        # This method is now not interactive; the GUI will set devices.
+        pass
 
     def start(self):
         """Start the audio stream and perform initial noise calibration if enabled."""
         self.running = True
-        self.select_devices()
         if self.enable_noise_reduction:
             self.calibrate_noise_profile()
         try:
@@ -172,7 +158,8 @@ class VoiceModulator:
                 device=(self.input_device, self.output_device)
             )
             self.audio_stream.start()
-            logging.info("Voice modulator started.")
+            logging.info("Voice modulator started with samplerate=%d, channels=%d, blocksize=%d, pitch=%f",
+                         self.samplerate, self.channels, self.blocksize, self.pitch)
             while self.running:
                 time.sleep(0.5)
         except Exception as e:
@@ -212,6 +199,22 @@ def setup_logging():
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)
 
+def get_input_devices():
+    devices = sd.query_devices()
+    input_devices = {"Default": "Default"}
+    for i, dev in enumerate(devices):
+        if dev["max_input_channels"] > 0:
+            input_devices[str(i)] = dev["name"]
+    return input_devices
+
+def get_output_devices():
+    devices = sd.query_devices()
+    output_devices = {"Default": "Default"}
+    for i, dev in enumerate(devices):
+        if dev["max_output_channels"] > 0:
+            output_devices[str(i)] = dev["name"]
+    return output_devices
+
 # GUI window for dynamic configuration.
 class ConfigWindow(tk.Tk):
     def __init__(self, modulator: VoiceModulator, presets: dict):
@@ -219,69 +222,151 @@ class ConfigWindow(tk.Tk):
         self.title("Voice Modulator Configuration")
         self.modulator = modulator
         self.presets = presets
-        self.geometry("400x300")
+        self.geometry("500x500")
+        self.modulator_thread = None
         self.create_widgets()
-        self.load_current_settings()
+        self.load_basic_settings()
+        self.load_advanced_settings()
+        # Start the modulator stream using current settings.
+        self.restart_stream()
 
     def create_widgets(self):
+        # Preset selection and basic parameters.
+        basic_frame = ttk.LabelFrame(self, text="Basic Configuration")
+        basic_frame.pack(padx=10, pady=10, fill="x")
+
         # Preset selection.
-        preset_frame = ttk.LabelFrame(self, text="Presets")
-        preset_frame.pack(padx=10, pady=10, fill="x")
-        ttk.Label(preset_frame, text="Select Preset:").pack(side="left", padx=5, pady=5)
-        self.preset_var = tk.StringVar()
-        self.preset_menu = ttk.OptionMenu(preset_frame, self.preset_var,
+        ttk.Label(basic_frame, text="Select Preset:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.preset_var = tk.StringVar(value=list(self.presets.keys())[0])
+        self.preset_menu = ttk.OptionMenu(basic_frame, self.preset_var,
                                           list(self.presets.keys())[0],
                                           *self.presets.keys(),
                                           command=self.on_preset_selected)
-        self.preset_menu.pack(side="left", padx=5, pady=5)
+        self.preset_menu.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
         # Pitch control.
-        control_frame = ttk.LabelFrame(self, text="Parameters")
-        control_frame.pack(padx=10, pady=10, fill="x")
-        ttk.Label(control_frame, text="Pitch (semitones):").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(basic_frame, text="Pitch (semitones):").grid(row=1, column=0, padx=5, pady=5, sticky="w")
         self.pitch_var = tk.DoubleVar()
-        self.pitch_scale = ttk.Scale(control_frame, from_=-10, to=10, orient="horizontal",
+        self.pitch_scale = ttk.Scale(basic_frame, from_=-10, to=10, orient="horizontal",
                                      variable=self.pitch_var)
-        self.pitch_scale.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        control_frame.columnconfigure(1, weight=1)
+        self.pitch_scale.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
         # Noise reduction toggle.
         self.nr_var = tk.BooleanVar()
-        self.nr_check = ttk.Checkbutton(control_frame, text="Enable Noise Reduction", variable=self.nr_var)
-        self.nr_check.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky="w")
+        self.nr_check = ttk.Checkbutton(basic_frame, text="Enable Noise Reduction", variable=self.nr_var)
+        self.nr_check.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky="w")
 
-        # Buttons for applying settings and calibrating noise.
-        button_frame = ttk.Frame(self)
-        button_frame.pack(padx=10, pady=10, fill="x")
-        apply_btn = ttk.Button(button_frame, text="Apply Settings", command=self.apply_settings)
-        apply_btn.pack(side="left", padx=5)
-        calibrate_btn = ttk.Button(button_frame, text="Recalibrate Noise", command=self.recalibrate_noise)
-        calibrate_btn.pack(side="left", padx=5)
+        # Button to apply basic settings.
+        basic_apply_btn = ttk.Button(basic_frame, text="Apply Basic Settings", command=self.apply_basic_settings)
+        basic_apply_btn.grid(row=3, column=0, columnspan=2, padx=5, pady=5)
 
-    def load_current_settings(self):
-        """Load current modulator settings into the GUI controls."""
+        # Advanced configuration.
+        adv_frame = ttk.LabelFrame(self, text="Advanced Configuration")
+        adv_frame.pack(padx=10, pady=10, fill="x")
+
+        ttk.Label(adv_frame, text="Samplerate (Hz):").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.samplerate_var = tk.IntVar(value=self.modulator.samplerate)
+        self.samplerate_entry = ttk.Entry(adv_frame, textvariable=self.samplerate_var)
+        self.samplerate_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+
+        ttk.Label(adv_frame, text="Channels:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.channels_var = tk.IntVar(value=self.modulator.channels)
+        self.channels_entry = ttk.Entry(adv_frame, textvariable=self.channels_var)
+        self.channels_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+
+        ttk.Label(adv_frame, text="Blocksize:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        self.blocksize_var = tk.IntVar(value=self.modulator.blocksize)
+        self.blocksize_entry = ttk.Entry(adv_frame, textvariable=self.blocksize_var)
+        self.blocksize_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+
+        ttk.Label(adv_frame, text="Calibration Duration (sec):").grid(row=3, column=0, padx=5, pady=5, sticky="w")
+        self.calibration_duration_var = tk.DoubleVar(value=self.modulator.calibration_duration)
+        self.calibration_duration_entry = ttk.Entry(adv_frame, textvariable=self.calibration_duration_var)
+        self.calibration_duration_entry.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
+
+        # Input and output device selection.
+        input_devs = get_input_devices()
+        output_devs = get_output_devices()
+        ttk.Label(adv_frame, text="Input Device:").grid(row=4, column=0, padx=5, pady=5, sticky="w")
+        self.input_device_var = tk.StringVar(value="Default")
+        input_options = list(input_devs.keys())
+        self.input_menu = ttk.OptionMenu(adv_frame, self.input_device_var, "Default", *input_options)
+        self.input_menu.grid(row=4, column=1, padx=5, pady=5, sticky="ew")
+
+        ttk.Label(adv_frame, text="Output Device:").grid(row=5, column=0, padx=5, pady=5, sticky="w")
+        self.output_device_var = tk.StringVar(value="Default")
+        output_options = list(output_devs.keys())
+        self.output_menu = ttk.OptionMenu(adv_frame, self.output_device_var, "Default", *output_options)
+        self.output_menu.grid(row=5, column=1, padx=5, pady=5, sticky="ew")
+
+        # Buttons for advanced settings.
+        adv_btn_frame = ttk.Frame(adv_frame)
+        adv_btn_frame.grid(row=6, column=0, columnspan=2, pady=10)
+        restart_btn = ttk.Button(adv_btn_frame, text="Restart Stream", command=self.restart_stream)
+        restart_btn.pack(side="left", padx=5)
+        stop_btn = ttk.Button(adv_btn_frame, text="Stop Stream", command=self.stop_stream)
+        stop_btn.pack(side="left", padx=5)
+
+        adv_frame.columnconfigure(1, weight=1)
+        basic_frame.columnconfigure(1, weight=1)
+
+    def load_basic_settings(self):
+        """Load basic settings from the modulator into the GUI."""
         with self.modulator.param_lock:
             self.pitch_var.set(self.modulator.pitch)
             self.nr_var.set(self.modulator.enable_noise_reduction)
 
+    def load_advanced_settings(self):
+        """Load advanced settings from the modulator into the GUI."""
+        self.samplerate_var.set(self.modulator.samplerate)
+        self.channels_var.set(self.modulator.channels)
+        self.blocksize_var.set(self.modulator.blocksize)
+        self.calibration_duration_var.set(self.modulator.calibration_duration)
+        # For devices, "Default" means None.
+        self.input_device_var.set("Default" if self.modulator.input_device is None else str(self.modulator.input_device))
+        self.output_device_var.set("Default" if self.modulator.output_device is None else str(self.modulator.output_device))
+
     def on_preset_selected(self, preset_name):
-        """When a preset is chosen, update the GUI controls with the preset values."""
+        """When a preset is chosen, update basic controls."""
         preset = self.presets.get(preset_name)
         if preset:
             self.pitch_var.set(preset.get("pitch", 0.0))
             self.nr_var.set(preset.get("enable_noise_reduction", True))
 
-    def apply_settings(self):
-        """Apply the settings from the GUI to the modulator."""
+    def apply_basic_settings(self):
+        """Apply basic settings (pitch and noise reduction) to the modulator."""
         with self.modulator.param_lock:
             self.modulator.pitch = self.pitch_var.get()
             self.modulator.enable_noise_reduction = self.nr_var.get()
-        logging.info("Applied settings: pitch=%f, noise reduction=%s",
+        logging.info("Applied basic settings: pitch=%f, noise reduction=%s",
                      self.modulator.pitch, self.modulator.enable_noise_reduction)
 
-    def recalibrate_noise(self):
-        """Trigger noise calibration in the modulator."""
-        threading.Thread(target=self.modulator.calibrate_noise_profile, daemon=True).start()
+    def restart_stream(self):
+        """Stop the current stream, update advanced settings, and restart the modulator."""
+        logging.info("Restarting audio stream with new advanced settings...")
+        self.stop_stream()
+        # Update advanced settings.
+        with self.modulator.param_lock:
+            self.modulator.samplerate = int(self.samplerate_var.get())
+            self.modulator.channels = int(self.channels_var.get())
+            self.modulator.blocksize = int(self.blocksize_var.get())
+            self.modulator.calibration_duration = float(self.calibration_duration_var.get())
+            inp = self.input_device_var.get()
+            self.modulator.input_device = None if inp == "Default" else int(inp)
+            outp = self.output_device_var.get()
+            self.modulator.output_device = None if outp == "Default" else int(outp)
+        # Start the modulator in a new thread.
+        self.modulator.running = True
+        self.modulator_thread = threading.Thread(target=self.modulator.start, daemon=True)
+        self.modulator_thread.start()
+
+    def stop_stream(self):
+        """Stop the modulator stream if running."""
+        if self.modulator.running:
+            self.modulator.stop()
+        if self.modulator_thread and self.modulator_thread.is_alive():
+            self.modulator_thread.join()
+            logging.info("Audio stream stopped.")
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Production Grade Voice Modulator with Interactive GUI")
@@ -298,9 +383,9 @@ def parse_arguments():
 def main():
     setup_logging()
     
-    # macOS-specific reminder for proper microphone access.
+    # macOS-specific reminder.
     if platform.system() == "Darwin":
-        logging.info("Detected macOS environment. Ensure your application has microphone access via System Preferences > Security & Privacy > Microphone.")
+        logging.info("Running on macOS. Ensure microphone access is granted in System Preferences > Security & Privacy > Microphone.")
 
     args = parse_arguments()
     config = Config(args.config)
@@ -320,18 +405,15 @@ def main():
         config.update("enable_noise_reduction", args.nr == "on")
 
     modulator = VoiceModulator(config)
-    # Start the modulator in a background thread.
-    modulator_thread = threading.Thread(target=modulator.start, daemon=True)
-    modulator_thread.start()
-
     # Launch the interactive GUI window.
     app = ConfigWindow(modulator, DEFAULT_PRESETS)
     app.protocol("WM_DELETE_WINDOW", app.quit)
     app.mainloop()
 
-    # When the GUI window is closed, signal the modulator to stop.
+    # On closing the GUI, ensure the modulator stream is stopped.
     modulator.stop()
-    modulator_thread.join()
+    if app.modulator_thread and app.modulator_thread.is_alive():
+        app.modulator_thread.join()
 
 if __name__ == "__main__":
     main()
