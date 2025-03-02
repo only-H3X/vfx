@@ -12,7 +12,7 @@ import noisereduce as nr
 import tkinter as tk
 from tkinter import ttk
 
-# Default configuration with additional audio quality parameters.
+# Default configuration with additional audio quality and noise reduction parameters.
 DEFAULT_CONFIG = {
     "pitch": 0.0,
     "samplerate": 44100,
@@ -24,7 +24,10 @@ DEFAULT_CONFIG = {
     "calibration_duration": 3.0,  # seconds for ambient noise calibration
     "enable_compression": False,
     "compression_gain": 2.0,      # gain for soft clipping compression
-    "dither_level": 1e-6          # amplitude of dithering noise
+    "dither_level": 1e-6,         # amplitude of dithering noise
+    # New noise reduction tuning parameters:
+    "nr_prop_decrease": 1.0,      # How much to reduce the noise (1.0 means full reduction)
+    "nr_n_std_thresh": 1.5        # Noise threshold in terms of standard deviations
 }
 
 # Preset configurations for 15 human vocals (basic settings).
@@ -82,6 +85,9 @@ class VoiceModulator:
         self.enable_compression = config.get("enable_compression")
         self.compression_gain = config.get("compression_gain")
         self.dither_level = config.get("dither_level")
+        # New noise reduction tuning parameters.
+        self.nr_prop_decrease = config.get("nr_prop_decrease")
+        self.nr_n_std_thresh = config.get("nr_n_std_thresh")
         self.noise_profile = None
         self.running = False
         self.audio_stream = None
@@ -128,12 +134,16 @@ class VoiceModulator:
             # Process each channel independently.
             for ch in range(indata.shape[1]):
                 channel_audio = indata[:, ch]
-                # Noise reduction.
+                # Apply noise reduction if enabled and a noise profile exists.
                 if nr_enabled and noise_profile is not None:
                     try:
-                        reduced_audio = nr.reduce_noise(y=channel_audio,
-                                                        sr=self.samplerate,
-                                                        y_noise=noise_profile)
+                        reduced_audio = nr.reduce_noise(
+                            y=channel_audio,
+                            sr=self.samplerate,
+                            y_noise=noise_profile,
+                            prop_decrease=self.nr_prop_decrease,
+                            n_std_thresh=self.nr_n_std_thresh
+                        )
                     except Exception as nr_err:
                         logging.error("Noise reduction error: %s", nr_err)
                         reduced_audio = channel_audio
@@ -153,7 +163,6 @@ class VoiceModulator:
             outdata[:] = indata  # fallback: pass input through
         end_time = time.perf_counter()
         processing_time = end_time - start_time
-        # Record and average the processing time.
         with self.param_lock:
             self.processing_times.append(processing_time)
             if len(self.processing_times) > 100:
@@ -255,7 +264,6 @@ class ConfigWindow(tk.Tk):
         self.load_advanced_settings()
         self.create_performance_panel()
         self.create_platform_info()
-        # Start performance metrics update.
         self.update_performance_metrics()
         # Start the modulator stream.
         self.restart_stream()
@@ -325,8 +333,17 @@ class ConfigWindow(tk.Tk):
         self.compression_enabled_var = tk.BooleanVar(value=self.modulator.enable_compression)
         self.compression_enabled_check = ttk.Checkbutton(adv_frame, text="Compression", variable=self.compression_enabled_var)
         self.compression_enabled_check.grid(row=8, column=1, padx=5, pady=5, sticky="w")
+        # New noise reduction parameters.
+        ttk.Label(adv_frame, text="NR Prop Decrease:").grid(row=9, column=0, padx=5, pady=5, sticky="w")
+        self.nr_prop_decrease_var = tk.DoubleVar(value=self.modulator.nr_prop_decrease)
+        self.nr_prop_decrease_entry = ttk.Entry(adv_frame, textvariable=self.nr_prop_decrease_var)
+        self.nr_prop_decrease_entry.grid(row=9, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Label(adv_frame, text="NR N Std Thresh:").grid(row=10, column=0, padx=5, pady=5, sticky="w")
+        self.nr_n_std_thresh_var = tk.DoubleVar(value=self.modulator.nr_n_std_thresh)
+        self.nr_n_std_thresh_entry = ttk.Entry(adv_frame, textvariable=self.nr_n_std_thresh_var)
+        self.nr_n_std_thresh_entry.grid(row=10, column=1, padx=5, pady=5, sticky="ew")
         adv_btn_frame = ttk.Frame(adv_frame)
-        adv_btn_frame.grid(row=9, column=0, columnspan=2, pady=10)
+        adv_btn_frame.grid(row=11, column=0, columnspan=2, pady=10)
         restart_btn = ttk.Button(adv_btn_frame, text="Restart Stream", command=self.restart_stream)
         restart_btn.pack(side="left", padx=5)
         stop_btn = ttk.Button(adv_btn_frame, text="Stop Stream", command=self.stop_stream)
@@ -360,12 +377,16 @@ class ConfigWindow(tk.Tk):
         self.compression_gain_var.set(self.modulator.compression_gain)
         self.dither_level_var.set(self.modulator.dither_level)
         self.compression_enabled_var.set(self.modulator.enable_compression)
+        self.nr_prop_decrease_var.set(self.modulator.nr_prop_decrease)
+        self.nr_n_std_thresh_var.set(self.modulator.nr_n_std_thresh)
 
     def on_preset_selected(self, preset_name):
         preset = self.presets.get(preset_name)
         if preset:
             self.pitch_var.set(preset.get("pitch", 0.0))
             self.nr_var.set(preset.get("enable_noise_reduction", True))
+            # Immediately update the modulator with the preset values.
+            self.apply_basic_settings()
 
     def apply_basic_settings(self):
         with self.modulator.param_lock:
@@ -377,7 +398,6 @@ class ConfigWindow(tk.Tk):
     def restart_stream(self):
         logging.info("Restarting audio stream with new advanced settings...")
         self.stop_stream()
-        # Update advanced settings.
         with self.modulator.param_lock:
             self.modulator.samplerate = int(self.samplerate_var.get())
             self.modulator.channels = int(self.channels_var.get())
@@ -390,7 +410,8 @@ class ConfigWindow(tk.Tk):
             self.modulator.compression_gain = float(self.compression_gain_var.get())
             self.modulator.dither_level = float(self.dither_level_var.get())
             self.modulator.enable_compression = self.compression_enabled_var.get()
-        # Start the modulator in a new thread.
+            self.modulator.nr_prop_decrease = float(self.nr_prop_decrease_var.get())
+            self.modulator.nr_n_std_thresh = float(self.nr_n_std_thresh_var.get())
         self.modulator.running = True
         self.modulator_thread = threading.Thread(target=self.modulator.start, daemon=True)
         self.modulator_thread.start()
