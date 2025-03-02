@@ -12,7 +12,7 @@ import noisereduce as nr
 import tkinter as tk
 from tkinter import ttk
 
-# Default configuration with additional audio quality and noise reduction parameters.
+# Default configuration with comprehensive audio quality and noise reduction parameters.
 DEFAULT_CONFIG = {
     "pitch": 0.0,
     "samplerate": 44100,
@@ -25,28 +25,147 @@ DEFAULT_CONFIG = {
     "enable_compression": False,
     "compression_gain": 2.0,      # gain for soft clipping compression
     "dither_level": 1e-6,         # amplitude of dithering noise
-    # New noise reduction tuning parameters:
-    "nr_prop_decrease": 1.0,      # How much to reduce the noise (1.0 means full reduction)
-    "nr_n_std_thresh": 1.5        # Noise threshold in terms of standard deviations
+    "nr_prop_decrease": 1.0,      # how much to reduce noise (1.0 = full reduction)
+    "nr_n_std_thresh": 1.5        # noise threshold in standard deviations
 }
 
-# Preset configurations for 15 human vocals (basic settings).
+# Updated presets now include a wider range of parameters.
 DEFAULT_PRESETS = {
-    "Male Bass":      {"pitch": -4.0, "enable_noise_reduction": True},
-    "Male Baritone":  {"pitch": -2.0, "enable_noise_reduction": True},
-    "Male Tenor":     {"pitch": 0.0,  "enable_noise_reduction": True},
-    "Male High":      {"pitch": 2.0,  "enable_noise_reduction": True},
-    "Female Alto":    {"pitch": -2.0, "enable_noise_reduction": True},
-    "Female Mezzo":   {"pitch": 0.0,  "enable_noise_reduction": True},
-    "Female Soprano": {"pitch": 2.0,  "enable_noise_reduction": True},
-    "Child Male":     {"pitch": 4.0,  "enable_noise_reduction": True},
-    "Child Female":   {"pitch": 4.0,  "enable_noise_reduction": True},
-    "Elderly Male":   {"pitch": -3.0, "enable_noise_reduction": True},
-    "Elderly Female": {"pitch": -1.0, "enable_noise_reduction": True},
-    "Narrator":       {"pitch": -1.0, "enable_noise_reduction": True},
-    "News Anchor":    {"pitch": 0.0,  "enable_noise_reduction": True},
-    "Podcast Host":   {"pitch": 0.0,  "enable_noise_reduction": True},
-    "Opera Singer":   {"pitch": 3.0,  "enable_noise_reduction": True}
+    "Male Bass": {
+        "pitch": -4.0,
+        "enable_noise_reduction": True,
+        "enable_compression": True,
+        "compression_gain": 3.0,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.0,
+        "nr_n_std_thresh": 1.5
+    },
+    "Male Baritone": {
+        "pitch": -2.0,
+        "enable_noise_reduction": True,
+        "enable_compression": True,
+        "compression_gain": 2.5,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.0,
+        "nr_n_std_thresh": 1.5
+    },
+    "Male Tenor": {
+        "pitch": 0.0,
+        "enable_noise_reduction": True,
+        "enable_compression": False,
+        "compression_gain": 2.0,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.0,
+        "nr_n_std_thresh": 1.5
+    },
+    "Male High": {
+        "pitch": 2.0,
+        "enable_noise_reduction": True,
+        "enable_compression": False,
+        "compression_gain": 2.0,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.0,
+        "nr_n_std_thresh": 1.5
+    },
+    "Female Alto": {
+        "pitch": -2.0,
+        "enable_noise_reduction": True,
+        "enable_compression": True,
+        "compression_gain": 2.5,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.0,
+        "nr_n_std_thresh": 1.5
+    },
+    "Female Mezzo": {
+        "pitch": 0.0,
+        "enable_noise_reduction": True,
+        "enable_compression": False,
+        "compression_gain": 2.0,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.0,
+        "nr_n_std_thresh": 1.5
+    },
+    "Female Soprano": {
+        "pitch": 2.0,
+        "enable_noise_reduction": True,
+        "enable_compression": False,
+        "compression_gain": 2.0,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.0,
+        "nr_n_std_thresh": 1.5
+    },
+    "Child Male": {
+        "pitch": 4.0,
+        "enable_noise_reduction": True,
+        "enable_compression": False,
+        "compression_gain": 1.5,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.0,
+        "nr_n_std_thresh": 1.5
+    },
+    "Child Female": {
+        "pitch": 4.0,
+        "enable_noise_reduction": True,
+        "enable_compression": False,
+        "compression_gain": 1.5,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.0,
+        "nr_n_std_thresh": 1.5
+    },
+    "Elderly Male": {
+        "pitch": -3.0,
+        "enable_noise_reduction": True,
+        "enable_compression": True,
+        "compression_gain": 2.0,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.2,
+        "nr_n_std_thresh": 1.7
+    },
+    "Elderly Female": {
+        "pitch": -1.0,
+        "enable_noise_reduction": True,
+        "enable_compression": True,
+        "compression_gain": 2.0,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.2,
+        "nr_n_std_thresh": 1.7
+    },
+    "Narrator": {
+        "pitch": -1.0,
+        "enable_noise_reduction": True,
+        "enable_compression": True,
+        "compression_gain": 2.0,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.0,
+        "nr_n_std_thresh": 1.5
+    },
+    "News Anchor": {
+        "pitch": 0.0,
+        "enable_noise_reduction": True,
+        "enable_compression": False,
+        "compression_gain": 2.0,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.0,
+        "nr_n_std_thresh": 1.5
+    },
+    "Podcast Host": {
+        "pitch": 0.0,
+        "enable_noise_reduction": True,
+        "enable_compression": False,
+        "compression_gain": 2.0,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.0,
+        "nr_n_std_thresh": 1.5
+    },
+    "Opera Singer": {
+        "pitch": 3.0,
+        "enable_noise_reduction": True,
+        "enable_compression": True,
+        "compression_gain": 3.0,
+        "dither_level": 1e-6,
+        "nr_prop_decrease": 1.0,
+        "nr_n_std_thresh": 1.5
+    }
 }
 
 class Config:
@@ -81,18 +200,18 @@ class VoiceModulator:
         self.output_device = config.get("output_device")
         self.enable_noise_reduction = config.get("enable_noise_reduction")
         self.calibration_duration = config.get("calibration_duration")
-        # New audio quality settings.
+        # Audio quality settings.
         self.enable_compression = config.get("enable_compression")
         self.compression_gain = config.get("compression_gain")
         self.dither_level = config.get("dither_level")
-        # New noise reduction tuning parameters.
+        # Noise reduction tuning parameters.
         self.nr_prop_decrease = config.get("nr_prop_decrease")
         self.nr_n_std_thresh = config.get("nr_n_std_thresh")
         self.noise_profile = None
         self.running = False
         self.audio_stream = None
         self.param_lock = threading.Lock()
-        # For performance metrics.
+        # Performance metrics.
         self.processing_times = []
         self.last_processing_time = 0.0
 
@@ -105,17 +224,15 @@ class VoiceModulator:
                                channels=self.channels,
                                dtype="float32")
             sd.wait()
-            # Use first channel as noise profile.
-            self.noise_profile = recording[:, 0]
+            self.noise_profile = recording[:, 0]  # Use first channel.
             logging.info("Noise calibration completed.")
         except Exception as e:
             logging.error("Noise calibration failed: %s", e)
             self.noise_profile = None
 
     def apply_compression_and_dither(self, audio):
-        """Apply a simple soft-clip compression and add dithering noise."""
+        """Apply soft-clip compression and add dithering noise."""
         if self.enable_compression:
-            # Soft-clip using tanh.
             audio = np.tanh(self.compression_gain * audio) / np.tanh(self.compression_gain)
         if self.dither_level > 0:
             audio = audio + np.random.normal(0, self.dither_level, audio.shape)
@@ -131,10 +248,8 @@ class VoiceModulator:
                 current_pitch = self.pitch
                 nr_enabled = self.enable_noise_reduction
                 noise_profile = self.noise_profile
-            # Process each channel independently.
             for ch in range(indata.shape[1]):
                 channel_audio = indata[:, ch]
-                # Apply noise reduction if enabled and a noise profile exists.
                 if nr_enabled and noise_profile is not None:
                     try:
                         reduced_audio = nr.reduce_noise(
@@ -149,18 +264,16 @@ class VoiceModulator:
                         reduced_audio = channel_audio
                 else:
                     reduced_audio = channel_audio
-                # Pitch shifting.
                 shifted = librosa.effects.pitch_shift(reduced_audio, self.samplerate, n_steps=current_pitch)
                 if len(shifted) < len(channel_audio):
                     shifted = np.pad(shifted, (0, len(channel_audio) - len(shifted)), mode="constant")
                 elif len(shifted) > len(channel_audio):
                     shifted = shifted[:len(channel_audio)]
-                # Apply compression and dithering.
                 processed[:, ch] = self.apply_compression_and_dither(shifted)
             outdata[:] = processed
         except Exception as e:
             logging.error("Error in audio callback: %s", e)
-            outdata[:] = indata  # fallback: pass input through
+            outdata[:] = indata
         end_time = time.perf_counter()
         processing_time = end_time - start_time
         with self.param_lock:
@@ -168,18 +281,17 @@ class VoiceModulator:
             if len(self.processing_times) > 100:
                 self.processing_times.pop(0)
             self.last_processing_time = sum(self.processing_times) / len(self.processing_times)
-        if processing_time > 0.05:  # 50ms threshold
+        if processing_time > 0.05:
             logging.warning("High processing time: %.3f s", processing_time)
 
     def list_devices(self):
-        """List available input/output devices."""
         devices = sd.query_devices()
         for i, dev in enumerate(devices):
             logging.info("Device %d: %s", i, dev["name"])
         return devices
 
     def start(self):
-        """Start the audio stream and perform initial noise calibration if enabled."""
+        """Start audio stream and perform initial noise calibration if enabled."""
         self.running = True
         if self.enable_noise_reduction:
             self.calibrate_noise_profile()
@@ -193,7 +305,7 @@ class VoiceModulator:
                 device=(self.input_device, self.output_device)
             )
             self.audio_stream.start()
-            logging.info("Voice modulator started with samplerate=%d, channels=%d, blocksize=%d, pitch=%f",
+            logging.info("Voice modulator started: samplerate=%d, channels=%d, blocksize=%d, pitch=%f",
                          self.samplerate, self.channels, self.blocksize, self.pitch)
             while self.running:
                 time.sleep(0.5)
@@ -203,14 +315,13 @@ class VoiceModulator:
             self.stop()
 
     def stop(self):
-        """Stop the audio stream."""
         self.running = False
         if self.audio_stream:
             self.audio_stream.stop()
             self.audio_stream.close()
         logging.info("Voice modulator stopped.")
 
-# Custom logging filter to limit console output.
+# Custom logging filter.
 class LessThanFilter(logging.Filter):
     def __init__(self, max_level):
         super().__init__()
@@ -250,14 +361,14 @@ def get_output_devices():
             output_devices[str(i)] = dev["name"]
     return output_devices
 
-# GUI window for dynamic configuration.
+# GUI window for comprehensive manual configuration.
 class ConfigWindow(tk.Tk):
     def __init__(self, modulator: VoiceModulator, presets: dict):
         super().__init__()
         self.title("Voice Modulator Configuration")
         self.modulator = modulator
         self.presets = presets
-        self.geometry("600x600")
+        self.geometry("600x650")
         self.modulator_thread = None
         self.create_widgets()
         self.load_basic_settings()
@@ -320,7 +431,6 @@ class ConfigWindow(tk.Tk):
         self.output_device_var = tk.StringVar(value="Default")
         self.output_menu = ttk.OptionMenu(adv_frame, self.output_device_var, "Default", *list(output_devs.keys()))
         self.output_menu.grid(row=5, column=1, padx=5, pady=5, sticky="ew")
-        # New advanced quality settings.
         ttk.Label(adv_frame, text="Compression Gain:").grid(row=6, column=0, padx=5, pady=5, sticky="w")
         self.compression_gain_var = tk.DoubleVar(value=self.modulator.compression_gain)
         self.compression_gain_entry = ttk.Entry(adv_frame, textvariable=self.compression_gain_var)
@@ -333,7 +443,6 @@ class ConfigWindow(tk.Tk):
         self.compression_enabled_var = tk.BooleanVar(value=self.modulator.enable_compression)
         self.compression_enabled_check = ttk.Checkbutton(adv_frame, text="Compression", variable=self.compression_enabled_var)
         self.compression_enabled_check.grid(row=8, column=1, padx=5, pady=5, sticky="w")
-        # New noise reduction parameters.
         ttk.Label(adv_frame, text="NR Prop Decrease:").grid(row=9, column=0, padx=5, pady=5, sticky="w")
         self.nr_prop_decrease_var = tk.DoubleVar(value=self.modulator.nr_prop_decrease)
         self.nr_prop_decrease_entry = ttk.Entry(adv_frame, textvariable=self.nr_prop_decrease_var)
@@ -385,8 +494,14 @@ class ConfigWindow(tk.Tk):
         if preset:
             self.pitch_var.set(preset.get("pitch", 0.0))
             self.nr_var.set(preset.get("enable_noise_reduction", True))
-            # Immediately update the modulator with the preset values.
+            self.compression_enabled_var.set(preset.get("enable_compression", False))
+            self.compression_gain_var.set(preset.get("compression_gain", 2.0))
+            self.dither_level_var.set(preset.get("dither_level", 1e-6))
+            self.nr_prop_decrease_var.set(preset.get("nr_prop_decrease", 1.0))
+            self.nr_n_std_thresh_var.set(preset.get("nr_n_std_thresh", 1.5))
             self.apply_basic_settings()
+            self.load_advanced_settings()
+            self.restart_stream()
 
     def apply_basic_settings(self):
         with self.modulator.param_lock:
